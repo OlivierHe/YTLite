@@ -27,11 +27,36 @@ jobs:
         run: |
           brew install jq wget zip unzip || true
 
-      - name: Install ipatool
+      - name: Install ipatool (robust)
+        shell: bash
         run: |
-          wget -O /usr/local/bin/ipatool https://github.com/majd/ipatool/releases/latest/download/ipatool_darwin_all
-          chmod +x /usr/local/bin/ipatool
+          set -e
+          mkdir -p "$HOME/bin"
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+          ARCH="$(uname -m)"
+          if [ "$ARCH" = "arm64" ]; then
+            ASSET_NAME="ipatool_darwin_arm64"
+          else
+            ASSET_NAME="ipatool_darwin_amd64"
+          fi
+
+          # Try to fetch prebuilt asset from latest release
+          URL="$(curl -s https://api.github.com/repos/majd/ipatool/releases/latest \
+            | jq -r ".assets[] | select(.name==\"${ASSET_NAME}\") | .browser_download_url")" || true
+
+          if [ -n "$URL" ] && [ "$URL" != "null" ]; then
+            echo "Downloading ipatool asset: $ASSET_NAME"
+            wget -O "$HOME/bin/ipatool" "$URL"
+            chmod +x "$HOME/bin/ipatool"
+          else
+            echo "Prebuilt asset not found; building ipatool with Go..."
+            brew install go
+            GOBIN="$HOME/bin" go install github.com/majd/ipatool@latest
+          fi
+
           ipatool --version
+
 
 
       - name: App Store login
