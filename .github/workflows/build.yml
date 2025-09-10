@@ -1,0 +1,112 @@
+name: Build YouTube Plus (App Store fetch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      TWEAK_URL:
+        description: "URL directe vers le fichier tweak (zip/ipa avec les .dylib & ressources)"
+        required: true
+      APP_NAME:
+        description: "Nom d'affichage (optionnel)"
+        required: false
+        default: "YouTube"
+      BUNDLE_ID:
+        description: "Bundle ID (optionnel, sinon conserve com.google.ios.youtube)"
+        required: false
+        default: "com.google.ios.youtube"
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Homebrew deps
+        run: |
+          brew update
+          brew install go zip unzip wget jq
+          brew tap mitchellh/homebrew-tap || true
+
+      - name: Install ipatool
+        run: |
+          brew install skycocker/chromebrew/ipatool || true
+          if ! command -v ipatool >/dev/null; then
+            # fallback: download prebuilt ipatool
+            wget -O /usr/local/bin/ipatool https://github.com/majd/ipatool/releases/latest/download/ipatool_darwin_amd64
+            chmod +x /usr/local/bin/ipatool
+          fi
+          ipatool --version || true
+
+      - name: App Store login
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        run: |
+          ipatool auth revoke || true
+          ipatool auth login \
+            --email "$APPLE_ID" \
+            --password "$APP_SPECIFIC_PASSWORD" \
+            --save
+
+      - name: Download YouTube IPA from App Store
+        env:
+          STORE_REGION: ${{ secrets.STORE_REGION }}
+        run: |
+          mkdir -p work
+          cd work
+          ipatool purchase --bundle-id com.google.ios.youtube --country "${STORE_REGION:-FR}" || true
+          ipatool download --bundle-id com.google.ios.youtube --country "${STORE_REGION:-FR}" --output youtube.ipa
+          ls -lh
+
+      - name: Download tweak package
+        run: |
+          cd work
+          wget -O tweak.pkg "${{ github.event.inputs.TWEAK_URL }}"
+          ls -lh
+
+      # NOTE: Beaucoup de patchers exigent un IPA décrypté. On tente une injection générique.
+      - name: Try generic patch (Azule-like)
+        run: |
+          cd work
+          mkdir base tweak
+          # Extraire l'IPA (zip)
+          unzip -q youtube.ipa -d base
+          # Essayer de décompresser le package tweak (zip/ipa)
+          unzip -q tweak.pkg -d tweak || true
+          # Copier payload tweak courant (dylibs, frameworks, plugins) si présents
+          # Ces chemins varient selon le tweak (YTLite/uYouPlus/uYouEnhanced). On couvre les plus communs.
+          shopt -s globstar nullglob
+          for dir in "tweak/Payload/" "tweak/"; do
+            [ -d "$dir" ] || continue
+            cp -R "$dir"**/*.dylib base/Payload/*.app/ 2>/dev/null || true
+            cp -R "$dir"**/*.framework base/Payload/*.app/Frameworks/ 2>/dev/null || true
+            cp -R "$dir"**/*.bundle base/Payload/*.app/PlugIns/ 2>/dev/null || true
+            cp -R "$dir"**/Resources base/Payload/*.app/ 2>/dev/null || true
+          done
+
+          # Renommer l'app si demandé
+          APP_NAME="${{ github.event.inputs.APP_NAME }}"
+          if [ -n "$APP_NAME" ]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" base/Payload/*.app/Info.plist || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" base/Payload/*.app/Info.plist || true
+          fi
+
+          # Changer le bundle id si fourni
+          BUNDLE_ID="${{ github.event.inputs.BUNDLE_ID }}"
+          if [ -n "$BUNDLE_ID" ] && [ "$BUNDLE_ID" != "com.google.ios.youtube" ]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" base/Payload/*.app/Info.plist || true
+          fi
+
+          # Repack
+          cd base
+          zip -qry ../YouTubePlus-patched.ipa .
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTubePlus-IPA
+          path: work/YouTubePlus-patched.ipa
+          if-no-files-found: error
