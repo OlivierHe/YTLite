@@ -23,21 +23,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Homebrew deps
+      - name: Install deps
         run: |
-          brew update
-          brew install go zip unzip wget jq
-          brew tap mitchellh/homebrew-tap || true
+          brew install jq wget zip unzip || true
 
       - name: Install ipatool
         run: |
-          brew install skycocker/chromebrew/ipatool || true
-          if ! command -v ipatool >/dev/null; then
-            # fallback: download prebuilt ipatool
-            wget -O /usr/local/bin/ipatool https://github.com/majd/ipatool/releases/latest/download/ipatool_darwin_amd64
-            chmod +x /usr/local/bin/ipatool
-          fi
-          ipatool --version || true
+          wget -O /usr/local/bin/ipatool https://github.com/majd/ipatool/releases/latest/download/ipatool_darwin_all
+          chmod +x /usr/local/bin/ipatool
+          ipatool --version
+
 
       - name: App Store login
         env:
