@@ -52,7 +52,7 @@ jobs:
           else
             echo "Prebuilt asset not found; building ipatool with Go..."
             brew install go
-            GOBIN="$HOME/bin" go install github.com/majd/ipatool@latest
+            GOBIN="$HOME/bin" go install github.com/majd/ipatool/cmd/ipatool@latest
           fi
 
           ipatool --version
